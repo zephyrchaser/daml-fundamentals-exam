@@ -121,7 +121,7 @@ accomplishmentsEmptyIfReadyToPublishFalse = script do
     accomplishmentsBefore <- query @Accomplishment evaluator
 
     newProposalId <- exercisePropose proposer1 projectProposalId
-    approvedId <- exerciseApprove proposer1 projectProposalId (date 2023 Apr 12) (Some "ready")
+    approvedId <- exerciseApprove evaluator projectProposalId (date 2023 Apr 12) (Some "ready")
     notReadyToPublish <- submit evaluator do
         exerciseCmd approvedId Evaluate with
             evaluationDate = (date 2023 Apr 12)
