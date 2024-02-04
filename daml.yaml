@@ -1,0 +1,9 @@
+sdk-version: 2.7.6
+name: daml-fundamentals-exam
+version: 1.0.0
+source: daml
+init-script: Main:setup
+dependencies:
+- daml-prim
+- daml-stdlib
+- daml-script

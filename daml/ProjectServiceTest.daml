@@ -1,0 +1,236 @@
+module ProjectServiceTest where
+
+import Daml.Script
+import ProjectService
+import DA.Date
+import DA.Assert
+import DA.Optional
+import ProjectExerciseCmd
+
+-- test data preparation --
+
+data PSData = PSData with
+    proposer1: Party
+    proposer2: Party
+    evaluator: Party
+    projectInfo: ProjectInfo
+    projectProposalId: ProjectProposalId
+
+getProjectInfo : Party -> Date -> Date -> Script ProjectInfo
+getProjectInfo projectLead start end = script do
+
+    return (ProjectInfo 
+                with
+                lead = projectLead
+                title = "Daml Forge"
+                details = "Some project specifics"
+                soloProject = True
+                participants = [projectLead]
+                budgetRequirements = None
+                startDate = start
+                endDate = end)
+
+getPSData : Text -> Text -> Script PSData
+getPSData name1 name2 = script do
+    proposer1 <- allocateParty name1
+    proposer2 <- allocateParty name2
+    evaluator <- allocateParty "Daml Verifier"
+    projectInfo <- getProjectInfo proposer1 (date 2022 Sep 10) (date 2023 Apr 01)
+
+    projectProposalId <- submit proposer1 do
+        createCmd ProjectProposal with
+            proposer = proposer1
+            evaluator
+            projectInfo
+            note = "notes"
+
+    return (PSData
+                with
+                proposer1
+                proposer2
+                evaluator
+                projectInfo
+                projectProposalId)
+
+{-
+    positive tests:
+
+        1. fullWorkflowTest
+        2. accomplishmentsEmptyIfReadyToPublishFalse
+        3. cancelProposalTest
+-}
+
+{-
+    fullWorflowTest:
+
+    0. test data setup
+    1. exercise Propose
+    2. retrieve current accomplishments
+    3. exercise ProposerAccomplishments
+    4. assert whether there are no accomplishments
+    5. exercise Reject with a note
+    6. exercise Revise with new info
+    7. exercise Approve
+    8. exercise Evaluate with readyToPublish True to create a new accomplishment
+    9. verify new accomplishment is created by querring contract key and asserting proposer is equal to project lead
+-}
+fullWorflowTest : Script ()
+fullWorflowTest = script do
+    testPSData@PSData {proposer1, proposer2, evaluator, projectProposalId} <- getPSData "Fiby" "John"
+
+    newProposalId <- exercisePropose proposer1 projectProposalId
+    previousAccomplishments <- query @Accomplishment evaluator
+
+    newAccomplishments <- submit evaluator do
+        exerciseCmd newProposalId ProposerAccomplishments with accomplishments = previousAccomplishments
+
+    assertEq ["NA"] newAccomplishments
+
+    rejectProposalId <- exerciseReject evaluator newProposalId "Aim to finish it by the end of March"
+    upodatedProjectInfo <- getProjectInfo proposer1 (date 2022 Sep 10) (date 2023 Mar 25)
+    revisedProposalId <- exerciseRevise proposer1 rejectProposalId upodatedProjectInfo "The end date is updated"
+    approvedProposalId <- exerciseApprove evaluator revisedProposalId (date 2023 Feb 17) (Some "Approved")
+
+    newAccomplishmentId <- submit evaluator do
+        exerciseCmd approvedProposalId Evaluate with
+            evaluationDate = (date 2023 Apr 12)
+            feedback = Some "Ready to be published"
+            readyToPublish = True
+
+    availableAccomplishments <- queryContractKey @Accomplishment evaluator (proposer1, upodatedProjectInfo)
+
+    assertMsg "Project leads do not match" (proposer1 == (fromSome availableAccomplishments)._2.project.projectInfo.lead)
+
+    return ()
+
+
+{-
+    accomplishmentsEmptyIfReadyToPublishFalse
+
+    0.a. prepare test data
+    0.b. query for for accomplishments
+    1. exercise Propose
+    2. exercise Approve
+    3. exercise Evaluate with readyToPublish False
+    4. verify that there no new accomplishments by querring for accomplishments and comparing the result with the one saved before the flow
+    5. verify that the querried list is empty
+-}
+accomplishmentsEmptyIfReadyToPublishFalse = script do
+    testPSData@PSData {proposer1, proposer2, evaluator, projectInfo, projectProposalId} <- getPSData "Fiby" "John"
+    
+    accomplishmentsBefore <- query @Accomplishment evaluator
+
+    newProposalId <- exercisePropose proposer1 projectProposalId
+    approvedId <- exerciseApprove proposer1 projectProposalId (date 2023 Apr 12) (Some "ready")
+    notReadyToPublish <- submit evaluator do
+        exerciseCmd approvedId Evaluate with
+            evaluationDate = (date 2023 Apr 12)
+            feedback = Some "Ready to be published"
+            readyToPublish = False
+
+    accomplishmentsAfter <- query @Accomplishment evaluator
+
+    assertEq accomplishmentsBefore accomplishmentsAfter
+    assertEq [] accomplishmentsAfter
+
+    return ()
+
+{-
+    cancelProposalTest
+
+    0. prepare test data
+    1. exercise Propose
+    2. exercise Reject
+    3. exercise Cancel
+    4. verify that there is no project proposals contracts by quering and comparing the result with empty list
+-}
+cancelProposalTest : Script ()
+cancelProposalTest = script do
+    testPSData@PSData {proposer1, proposer2, evaluator, projectInfo, projectProposalId} <- getPSData "Fiby" "John"
+
+    newProposalId <- exercisePropose proposer1 projectProposalId
+    rejected <- exerciseReject evaluator newProposalId "Aim to finish it by the end of March"
+
+    submit proposer1 do
+        exerciseCmd rejected Cancel
+
+    a <- query @ProjectProposal evaluator
+
+    assertEq [] a
+
+    return ()
+
+
+{-
+    negative tests:
+
+        1. cantLeaveProjectInfoSameTest
+        2. cantCreateAccomplishmentByProposer
+        3. cantRejectCanceledProposalTest
+-}
+    
+{-
+    cantLeaveProjectInfoSameTest
+
+    0. prepare test data
+    1. exercise Propose
+    2. exercise Reject
+    3. verify that subsequent Revise exercise will fail
+-}
+cantLeaveProjectInfoSameTest : Script ()
+cantLeaveProjectInfoSameTest = script do
+    testPSData@PSData {proposer1, proposer2, evaluator, projectInfo, projectProposalId} <- getPSData "Fiby" "John"
+
+    newProposalId <- exercisePropose proposer1 projectProposalId
+    rejected <- exerciseReject evaluator newProposalId "Aim to finish it by the end of March"
+
+    submitMustFail proposer1 do
+        exerciseCmd rejected Revise with
+            newProjectInfo = projectInfo
+            comment = "Just a comment"
+
+    return ()
+
+{-
+    cantCreateAccomplishmentByProposerTest
+
+    0. prepare test data
+    1. exercise Propose
+    2. exercise Approve
+    3. verify that explicit creation of the accomplishment by proposer will fail
+-}
+cantCreateAccomplishmentByProposerTest : Script ()
+cantCreateAccomplishmentByProposerTest = script do
+    testPSData@PSData {proposer1, proposer2, evaluator, projectInfo, projectProposalId} <- getPSData "Fiby" "John"
+
+    newProposalId <- exercisePropose proposer1 projectProposalId
+    approvedId <- exerciseApprove evaluator projectProposalId (date 2023 Apr 12) (Some "ready")
+    createdProject <- queryContractId evaluator approvedId
+
+    submitMustFail proposer1 do
+        createCmd Accomplishment with
+            evaluator
+            project = fromSome createdProject
+
+    return ()
+
+{-
+    cantRejectCanceledProposalTest
+
+    0. prepare test data
+    1. exercise Propose
+    2. exercise Cancel
+    3. verify that Reject will fail since propject proposal's contract id has already been used
+-}
+cantRejectCanceledProposalTest: Script()
+cantRejectCanceledProposalTest = script do
+    testPSData@PSData {proposer1, proposer2, evaluator, projectInfo, projectProposalId} <- getPSData "Fiby" "John"
+
+    newProposalId <- exercisePropose proposer1 projectProposalId
+    submit proposer1 do
+        exerciseCmd newProposalId Cancel
+
+    submitMustFail evaluator do
+        exerciseCmd newProposalId Reject with feedback = "Update title"
+
+    return ()

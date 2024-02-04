@@ -1,0 +1,47 @@
+module Main where
+
+import Daml.Script
+import ProjectService
+import DA.Date
+
+setup = script do
+    evaluator <- allocatePartyWithHint "Evaluator" (PartyIdHint "Eval")
+    proposer <- allocatePartyWithHint "Proposer" (PartyIdHint "Prop")
+
+    let
+        pInfo1 = ProjectInfo with
+            lead = proposer
+            title = "Title 1"
+            details = "Project 1 details"
+            soloProject = True
+            participants = [proposer]
+            budgetRequirements = Some 1000.00
+            startDate = (date 2022 May 28)
+            endDate = (date 2023 Jan 19)
+
+        pInfo2 = ProjectInfo with
+            lead = proposer
+            title = "Title 2"
+            details = "Project 2 details"
+            soloProject = True
+            participants = [proposer]
+            budgetRequirements = Some 2000.00
+            startDate = (date 2022 Jun 28)
+            endDate = (date 2022 Dec 23)
+
+    evaluatorId <- validateUserId "ProjectVerifier"
+    aliceId <- validateUserId "Alice"
+    johnId <- validateUserId "John"
+
+    createUser (User evaluatorId (Some evaluator)) [CanActAs evaluator]
+    createUser (User aliceId (Some proposer)) [CanActAs proposer]
+    createUser (User johnId (Some proposer)) [CanActAs proposer]
+
+    submit proposer do
+        createCmd ProjectProposal with
+            proposer
+            evaluator
+            projectInfo = pInfo2
+            note = "Proposal number 2"
+
+    return ()

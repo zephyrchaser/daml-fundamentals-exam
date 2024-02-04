@@ -1,0 +1,30 @@
+module ProjectExerciseCmd where
+
+import ProjectService
+import Daml.Script
+
+
+exercisePropose: Party -> ProjectProposalId -> Script ProjectProposalId
+exercisePropose proposer proposalId = script do
+    submit proposer do
+        exerciseCmd proposalId Propose
+
+exerciseReject: Party -> ProjectProposalId -> Text -> Script ProjectProposalId
+exerciseReject evaluator proposalId feedback = script do
+    submit evaluator do
+        exerciseCmd proposalId Reject with feedback
+
+exerciseRevise: Party -> ProjectProposalId -> ProjectInfo -> Text -> Script ProjectProposalId
+exerciseRevise proposer proposalId updatedInfo comment = script do
+    submit proposer do
+        exerciseCmd proposalId Revise with
+            newProjectInfo = updatedInfo
+            comment
+
+exerciseApprove: Party -> ProjectProposalId -> Date -> Optional Text -> Script ProjectId
+exerciseApprove evaluator proposalId evaluationDate note = script do
+    submit evaluator do
+        exerciseCmd proposalId Approve with
+            evaluationDate = evaluationDate
+            evaluatorNote = note
+
